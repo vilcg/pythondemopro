@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}登录{% endblock %}
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <h2 class="text-center mb-4">用户登录</h2>
+        <div id="loginError" class="alert alert-danger d-none"></div>
+        <form id="loginForm">
+            <div class="mb-3">
+                <label for="username" class="form-label">用户名</label>
+                <input type="text" class="form-control" id="username" required>
+            </div>
+            <div class="mb-3">
+                <label for="password" class="form-label">密码</label>
+                <input type="password" class="form-control" id="password" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">登录</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+$(function() {
+    $('#loginForm').on('submit', function(e) {
+        e.preventDefault();
+        $.ajax({
+            url: '/api/login',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                username: $('#username').val(),
+                password: $('#password').val()
+            }),
+            success: function(res) {
+                // 保存 token 并跳转到控制台
+                localStorage.setItem('token', res.token);
+                localStorage.setItem('user', JSON.stringify(res.user));
+                window.location.href = '/dashboard';
+            },
+            error: function(xhr) {
+                var msg = xhr.responseJSON?.error || '登录失败';
+                $('#loginError').text(msg).removeClass('d-none');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

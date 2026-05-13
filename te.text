@@ -1,0 +1,132 @@
+import hashlib
+import uuid
+import time
+from functools import wraps
+from flask import session, jsonify
+
+class AuthManager:
+    def __init__(self,db):
+        self.db = db
+        self.sessions = {}
+        self.session_timeout = 3600  # 1小时过期
+        self._init_user_table()
+
+    def _init_user_table(self):
+        """创建用户表并插入默认管理员（如果不存在）"""
+        with self.db.cursor() as cursor:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(50) UNIQUE,
+                    password_hash VARCHAR(64), 
+                    role ENUM('admin', 'teacher', 'student')
+                )
+            ''')
+
+            """插入默认管理员"""
+            cursor.execute("select id from users where username='admin'")
+            exists = cursor.fetchone()
+            if not exists:
+                pwd_hash = hashlib.sha256('admin123'.encode()).hexdigest()
+                insert_sql = "insert into users(username,password_hash,role) values (%s,%s,%s)"
+                cursor.execute(insert_sql,('admin',pwd_hash,'admin'))
+
+    def _hash_password(self,password):
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    def login(self,username,password):
+        """
+        验证用户并返回 token
+        成功返回 (token, user_info)，失败返回 (None, error_msg)
+        """
+        with self.db.cursor() as cursor:
+            sql = "select username,role from users where username=%s and password_hash=%s"
+            cursor.execute(sql,(username,self._hash_word(password)))
+            user = cursor.fetchone()
+            if user:
+                token = str(uuid.uuid4())
+                expire = time.time() + self.session_timeout
+                self.sessions[token] = {
+                    'username': user[0],
+                    'role': user[1],
+                    'expire': expire
+                }
+                return token,{'username':user[0],'role':user[1]}
+            return None,"用户名或密码错误"
+
+        
+    def logout(self,token):
+        """移除token，结束会话"""
+        self.sessions.pop(token,None)
+
+    
+    def get_user_from_token(self,token):
+        """根据 token 获取用户信息，过期则返回 None"""
+        session_data = self.sessions.get(token)
+        if session_data and session_data['expire'] > time.time():
+            return {'username':session_data['username'],'role':session_data['role']}
+        
+        """清楚会话"""
+        if session_data:
+            del self.sessions[token]
+        return None
+    
+    def get_user_from_request(self,request):
+         """从请求头 Authorization 提取 token 并获取用户"""
+         auth_header = request.headers.get('Authorization','')
+         if auth_header.startswith('Bearer'):
+             token = auth_header[7:]
+             return self.get_user_from_token(token)
+         return None
+
+    def register_user(self,username,password,role):
+    """注册新用户,供管理功能使用"""
+    with self.db.cursor() as cursor:
+        sql = "insert into users(username,password_hash,role) values(%s,%s,%s)"
+        cursor.execute(sql,(username,self._hash_word(password),role))
+        return True
+    return False
+
+# 装饰器
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        from flask import request,jsonify
+        auth_manager = getattr(request,'auth_manager',None)
+        if auth_manager is None:
+            from flask import current_app
+            auth_manager = current_app.config.get('auth_manager')
+        user = auth_manager.get_user_from_request(request) if auth_manager else None
+        if not user:
+            return jsonify({'error':'未登录或会话已过期'}),401
+         # 将用户信息附加到请求对象上，方便视图函数使用
+        request.current_user = user
+        return f(*args, **kwargs)
+    return decorated
+
+
+def role_required(*roles):
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            from flask import request, jsonify,current_app
+            auth_manager = current_app.config.get('auth_manager')
+            user = auth_manager.get_user_from_request(request) if auth_manager else None
+            if not user:
+                return jsonify({'error':'未登录'}),401
+            if user['role'] not in roles:
+                return jsonify({'error':'没有权限'}),403
+            request.current_user = user
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+        
+
+
+    
+
+
+
+
+  

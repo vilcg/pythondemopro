@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}控制面板{% endblock %}
+{% block content %}
+<div id="mainContent">
+    <h3>欢迎，<span id="curUserName"></span>（<span id="curUserRole"></span>）</h3>
+    <button class="btn btn-secondary btn-sm mb-3" id="logoutBtn">退出登录</button>
+
+    <!-- 课程列表 -->
+    <div class="card mb-4">
+        <div class="card-header">课程列表</div>
+        <div class="card-body">
+            <table class="table table-bordered table-hover" id="courseTable">
+                <thead>
+                    <tr>
+                        <th>课程编号</th><th>课程名称</th><th>容量</th><th>已选人数</th><th>授课教师</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 管理员：添加课程、分配教师按钮 -->
+    <div id="adminArea" class="d-none mb-4">
+        <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#addCourseModal">添加课程</button>
+        <button class="btn btn-warning ms-2" data-bs-toggle="modal" data-bs-target="#assignTeacherModal">分配教师</button>
+    </div>
+
+    <!-- 我的课程（学生视角） -->
+    <div id="studentArea" class="card mb-4 d-none">
+        <div class="card-header">我的已选课程</div>
+        <div class="card-body">
+            <table class="table table-sm" id="myCourseTable">
+                <thead><tr><th>课程编号</th><th>名称</th><th>操作</th></tr></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 添加课程模态框 -->
+<div class="modal fade" id="addCourseModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header"><h5>添加新课程</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+            <input type="text" class="form-control mb-2" id="newCourseId" placeholder="课程编号">
+            <input type="text" class="form-control mb-2" id="newCourseName" placeholder="课程名称">
+            <input type="number" class="form-control mb-2" id="newCapacity" placeholder="容量">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button class="btn btn-primary" id="saveCourseBtn">保存</button>
+        </div>
+    </div></div>
+</div>
+
+<!-- 分配教师模态框 -->
+<div class="modal fade" id="assignTeacherModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header"><h5>分配教师</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+            <select class="form-select mb-2" id="selectTeacher"></select>
+            <select class="form-select mb-2" id="selectCourse"></select>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button class="btn btn-primary" id="assignTeacherBtn">确认分配</button>
+        </div>
+    </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const token = localStorage.getItem('token');
+const user = JSON.parse(localStorage.getItem('user'));
+if (!token || !user) { window.location.href = '/'; }
+
+$.ajaxSetup({
+    beforeSend: function(xhr) { xhr.setRequestHeader('Authorization', 'Bearer ' + token); }
+});
+
+let currentUser = user;
+$('#curUserName').text(currentUser.username);
+$('#curUserRole').text(currentUser.role);
+
+// 根据角色显示对应区域
+if (currentUser.role === 'admin') {
+    $('#adminArea').removeClass('d-none');
+} else if (currentUser.role === 'student') {
+    $('#studentArea').removeClass('d-none');
+}
+
+$('#logoutBtn').click(function() {
+    $.post('/api/logout', function() {
+        localStorage.clear();
+        window.location.href = '/';
+    });
+});
+
+// 加载课程列表
+function loadCourses() {
+    $.getJSON('/api/courses', function(data) {
+        let rows = '';
+        data.forEach(c => {
+            let canEnroll = currentUser.role === 'student' && c.students.length < c.capacity
+                            && !c.students.includes(currentUser.username);
+            let canDrop = currentUser.role === 'student' && c.students.includes(currentUser.username);
+            let actions = '';
+            if (canEnroll) actions += `<button class="btn btn-sm btn-primary enroll-btn" data-cid="${c.course_id}">选课</button> `;
+            if (canDrop) actions += `<button class="btn btn-sm btn-danger drop-btn" data-cid="${c.course_id}">退课</button>`;
+            rows += `<tr>
+                <td>${c.course_id}</td><td>${c.course_name}</td><td>${c.capacity}</td>
+                <td>${c.students.length}</td><td>${c.teacher_id || '未分配'}</td>
+                <td>${actions}</td></tr>`;
+        });
+        $('#courseTable tbody').html(rows);
+    });
+}
+
+// 加载我的课程
+function loadMyCourses() {
+    if (currentUser.role !== 'student') return;
+    $.getJSON('/api/courses', function(allCourses) {
+        let myCourses = allCourses.filter(c => c.students.includes(currentUser.username));
+        let rows = myCourses.map(c => `<tr>
+            <td>${c.course_id}</td><td>${c.course_name}</td>
+            <td><button class="btn btn-sm btn-danger drop-btn" data-cid="${c.course_id}">退课</button></td>
+        </tr>`).join('');
+        $('#myCourseTable tbody').html(rows);
+    });
+}
+
+$(document).on('click', '.enroll-btn', function() {
+    let cid = $(this).data('cid');
+    $.ajax({
+        url: '/api/enroll', method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ student_id: currentUser.username, course_id: cid }),
+        success: function(res) { alert(res.message); loadCourses(); loadMyCourses(); },
+        error: function(xhr) { alert(xhr.responseJSON?.error || '操作失败'); }
+    });
+});
+
+$(document).on('click', '.drop-btn', function() {
+    let cid = $(this).data('cid');
+    $.ajax({
+        url: '/api/drop', method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ student_id: currentUser.username, course_id: cid }),
+        success: function(res) { alert(res.message); loadCourses(); loadMyCourses(); },
+        error: function(xhr) { alert(xhr.responseJSON?.error || '操作失败'); }
+    });
+});
+
+// 管理员：添加课程
+$('#saveCourseBtn').click(function() {
+    $.ajax({
+        url: '/api/courses', method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            course_id: $('#newCourseId').val(),
+            course_name: $('#newCourseName').val(),
+            capacity: parseInt($('#newCapacity').val())
+        }),
+        success: function() { location.reload(); },
+        error: function(xhr) { alert(xhr.responseJSON?.error); }
+    });
+});
+
+// 管理员：分配教师（弹出选择框）
+$('#assignTeacherModal').on('show.bs.modal', function() {
+    // 加载教师列表
+    $.getJSON('/api/teachers', function(teachers) {
+        $('#selectTeacher').html(teachers.map(t => `<option value="${t.teacher_id}">${t.name} (${t.teacher_id})</option>`));
+    });
+    // 加载课程列表
+    $.getJSON('/api/courses', function(courses) {
+        $('#selectCourse').html(courses.map(c => `<option value="${c.course_id}">${c.course_name} (${c.course_id})</option>`));
+    });
+});
+
+$('#assignTeacherBtn').click(function() {
+    $.ajax({
+        url: '/api/assign-teacher', method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            teacher_id: $('#selectTeacher').val(),
+            course_id: $('#selectCourse').val()
+        }),
+        success: function(res) { alert(res.message); location.reload(); },
+        error: function(xhr) { alert(xhr.responseJSON?.error); }
+    });
+});
+
+// 初始加载
+loadCourses();
+loadMyCourses();
+</script>
+{% endblock %}

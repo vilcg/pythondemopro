@@ -1,0 +1,3 @@
+SELECT * FROM `t2024`.`course` LIMIT 1000;
+SELECT * FROM `t2024`.`student` LIMIT 1000;
+SELECT * FROM `t2024`.`teacher` LIMIT 1000;
